@@ -561,6 +561,7 @@ object CatalogTableType {
   val EXTERNAL = new CatalogTableType("EXTERNAL")
   val MANAGED = new CatalogTableType("MANAGED")
   val VIEW = new CatalogTableType("VIEW")
+  val MV = new CatalogTableType("MATERIALIZED_VIEW")
 }
 
 
