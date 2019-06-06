@@ -607,7 +607,7 @@ class InMemoryCatalog(
     StringUtils.filterPattern(catalog(db).functions.keysIterator.toSeq, pattern)
   }
 
-  override def getMaterializedViewForTable(db: String, tblName: String): Seq[String] = {
-    Seq.empty
+  override def getMaterializedViewForTable(db: String, tblName: String): CatalogCreationData = {
+    CatalogCreationData.empty
   }
 }
