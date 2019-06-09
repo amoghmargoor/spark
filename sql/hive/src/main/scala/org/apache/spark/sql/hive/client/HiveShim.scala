@@ -17,18 +17,15 @@
 
 package org.apache.spark.sql.hive.client
 
-import java.lang.{Boolean => JBoolean, Integer => JInteger, Long => JLong}
 import java.lang.reflect.{InvocationTargetException, Method, Modifier}
+import java.lang.{Boolean => JBoolean, Integer => JInteger, Long => JLong}
 import java.net.URI
-import java.util.{Locale, ArrayList => JArrayList, List => JList, Map => JMap, Set => JSet}
 import java.util.concurrent.TimeUnit
+import java.util.{Locale, ArrayList => JArrayList, List => JList, Map => JMap, Set => JSet}
 
-import scala.collection.JavaConverters._
-import scala.util.control.NonFatal
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.conf.HiveConf
-import org.apache.hadoop.hive.metastore.api.{EnvironmentContext, FunctionType, Function => HiveFunction}
-import org.apache.hadoop.hive.metastore.api.{MetaException, PrincipalType, ResourceType, ResourceUri}
+import org.apache.hadoop.hive.metastore.api.{EnvironmentContext, FunctionType, MetaException, PrincipalType, ResourceType, ResourceUri, Function => HiveFunction}
 import org.apache.hadoop.hive.ql.Driver
 import org.apache.hadoop.hive.ql.io.AcidUtils
 import org.apache.hadoop.hive.ql.metadata.{Hive, HiveException, Partition, Table}
@@ -37,16 +34,18 @@ import org.apache.hadoop.hive.ql.processors.{CommandProcessor, CommandProcessorF
 import org.apache.hadoop.hive.ql.session.SessionState
 import org.apache.hadoop.hive.serde.serdeConstants
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.AnalysisException
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
+import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchPermanentFunctionException
-import org.apache.spark.sql.catalyst.catalog.{CatalogCreationData, CatalogFunction, CatalogTablePartition, CatalogUtils, FunctionResource, FunctionResourceType}
+import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{AtomicType, IntegralType, StringType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.Utils
+
+import scala.collection.JavaConverters._
+import scala.util.control.NonFatal
 
 /**
  * A shim that defines the interface between [[HiveClientImpl]] and the underlying Hive library used
@@ -1328,19 +1327,19 @@ private[client] class Shim_v3_1 extends Shim_v2_3 {
     val seq = getMaterializedViewsMethod.invoke(hive, "default").asInstanceOf[JList[Table]].asScala
     val mvs = seq.filter {
       mv =>
-        val creationMetadata = classOf[Table].getMethod("getCreationMetadata").invoke(seq(0))
+        val creationMetadata = classOf[Table].getMethod("getCreationMetadata").invoke(mv)
         val db = creationMetadata
           .getClass.getMethod("getDbName")
           .invoke(creationMetadata).asInstanceOf[String]
         val tables = creationMetadata.getClass.getMethod("getTablesUsed").invoke(creationMetadata)
           .asInstanceOf[JSet[String]]
           .asScala.toSeq
-        tables.contains(tbl)
+        tables.size == 1 && tables.head.endsWith(tbl)
     }
 
     val mvCreationDatas = mvs.map {
       mv =>
-      CatalogCreationData(dbName, tbl, Seq((mv.getDbName, mv.getTableName)))
+        CatalogCreationData(dbName, tbl, Seq((mv.getDbName, mv.getTableName)))
     }
     mvCreationDatas(0)
   }
