@@ -64,7 +64,7 @@ case class SubstituteMaterializedOSView(mvCatalog: HiveMvCatalog)
     // 5. The original filter is transformed to have mv's attribute using name,
 
     val ident = catalogTable.identifier
-    val mv = spark.sessionState.catalog.externalCatalog.
+    val mv = mvCatalog.
       getMaterializedViewForTable(ident.database.get, ident.table)
 
     val attrs = filters.flatMap {
@@ -78,7 +78,9 @@ case class SubstituteMaterializedOSView(mvCatalog: HiveMvCatalog)
             Seq.empty
         }
     }
-    val mvs = mvCatalog.getMaterializedViewsOfTable(mv)
+
+
+    val mvs = mvCatalog.getMaterializedViewsOfTable(mv.mvDetails)
 
     val table = mvs.map(table => {
       val mvPlan = mvCatalog.getMaterializedViewPlan(table).get

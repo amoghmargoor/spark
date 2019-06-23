@@ -26,9 +26,11 @@ package org.apache.spark.sql.catalyst.catalog
  */
 trait MvCatalog {
 
-  def getMaterializedViewsOfTable(metaInfos: CatalogCreationData): Seq[CatalogTable]
+  def getMaterializedViewsOfTable(mvInfo: Seq[(String, String)]): Seq[CatalogTable]
 
   def getMaterializedViewPlan(catalogTable: CatalogTable): Any
+
+  def getMaterializedViewForTable(tbl: String, db: String): CatalogCreationData
 
   def init(sparkSession: Any): Unit
 }
