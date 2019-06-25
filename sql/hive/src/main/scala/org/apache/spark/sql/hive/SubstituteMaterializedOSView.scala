@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.datasources.{FindDataSourceTable, LogicalRelation}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.util.Utils
 
 case class SubstituteMaterializedOSView(mvCatalog: HiveMvCatalog)
   extends Rule[LogicalPlan] {
@@ -166,7 +167,9 @@ case class SubstituteMaterializedOSView(mvCatalog: HiveMvCatalog)
 
 
   private def isMVTable(table: Option[CatalogTable]): Boolean = {
-    table.isDefined && table.get.tableType == CatalogTableType.MV
+    table.isDefined &&
+      (table.get.tableType == CatalogTableType.MV ||
+        (Utils.isTesting && table.get.viewOriginalText.isDefined))
   }
 
   private def isMvOsEnabled: Boolean = {

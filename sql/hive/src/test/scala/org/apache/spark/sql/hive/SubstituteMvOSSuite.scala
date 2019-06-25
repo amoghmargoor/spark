@@ -19,12 +19,12 @@ package org.apache.spark.sql.hive
 
 import java.net.URI
 
-import scala.collection.mutable
+import org.apache.spark.internal.config.Tests
 
+import scala.collection.mutable
 import org.mockito.Mockito.{spy, when}
 import org.scalatest.PrivateMethodTester
 import org.scalatest.mockito.MockitoSugar
-
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.internal.config.UI.UI_ENABLED
 import org.apache.spark.sql.{QueryTest, SparkSession}
@@ -41,37 +41,43 @@ import org.apache.spark.sql.types.StructType
 class SubstituteMvOSSuite extends QueryTest
   with PrivateMethodTester with MockitoSugar {
 
-  val spark = {
-    val sparkConf = new SparkConf(loadDefaults = true)
-    // sparkConf.set(HiveUtils.HIVE_METASTORE_VERSION, "3.1.1")
-    val builder = SparkSession.builder()
-      .config(sparkConf)
-      .config(UI_ENABLED.key, "false")
-      .config(HiveUtils.HIVE_METASTORE_VERSION.key, "3.1.1")
-      .master("local[1]")
-      .appName("Materialized views")
-      // The issue described in SPARK-16901 only appear when
-      // spark.sql.hive.metastore.jars is not set to builtin.
-      .config("spark.sql.hive.metastore.jars", "maven")
-      .enableHiveSupport()
-    builder.getOrCreate()
-  }
-
-  private val mvCatalog: MvCatalog = spark.sharedState.mvCatalog
-  private val mockCatalog: MvCatalog = spy(mvCatalog)
-  when(mockCatalog.getMaterializedViewForTable("db", "tbl"))
-    .thenReturn(CatalogCreationData("db", "tbl", Seq(("db", "mv"))))
+  var spark: SparkSession = _
+  var catalog: SessionCatalog = _
+  // private val mvCatalog: MvCatalog = spark.sharedState.mvCatalog
+  private val mockCatalog: MvCatalog = mock[HiveMvCatalog]
 
   // Private method accessors
   private val mvConfName = SQLConf.ENABLE_MV_OS_OPTIMIZATION.key
-  private var catalog: SessionCatalog = spark.sessionState.catalog
   private var dataSourceTable: CatalogTable = _
   private var mvTable: CatalogTable = _
   private val tablesCreated: mutable.Seq[CatalogTable] = mutable.Seq.empty
 
+  def getPlan(catalogTable: CatalogTable): Option[LogicalPlan] = {
+    val viewText = catalogTable.viewOriginalText
+    val plan = spark.sessionState.sqlParser.parsePlan(viewText.get)
+    Some(plan)
+  }
+
   override protected def beforeAll(): Unit = {
     super.beforeAll()
-    catalog.createDatabase(newDb("db"), ignoreIfExists = false)
+    spark = {
+      // sparkConf.set(HiveUtils.HIVE_METASTORE_VERSION, "3.1.1")
+      val builder = SparkSession.builder()
+        .config(UI_ENABLED.key, "false")
+        .config(Tests.IS_TESTING.key, "true" )
+        .master("local[1]")
+        .appName("Materialized views")
+        // The issue described in SPARK-16901 only appear when
+        // spark.sql.hive.metastore.jars is not set to builtin.
+        .config("spark.sql.hive.metastore.jars", "maven")
+        .enableHiveSupport()
+      builder.getOrCreate()
+    }
+
+    catalog = spark.sessionState.catalog
+
+
+    catalog.createDatabase(newDb("db"), ignoreIfExists = true)
     var ident = TableIdentifier("tbl", Some("db"))
     catalog.dropTable(ident, ignoreIfNotExists = true, purge = true)
     val serde = HiveSerDe.sourceToSerDe("orc")
@@ -89,14 +95,25 @@ class SubstituteMvOSSuite extends QueryTest
     catalog.dropTable(ident, ignoreIfNotExists = true, purge = true)
     mvTable = CatalogTable(
       identifier = TableIdentifier("mv", Some("db")),
-      tableType = CatalogTableType.MANAGED,
+      tableType = CatalogTableType.MV,
       storage = CatalogStorageFormat.empty,
       schema = new StructType()
         .add("id", "int").add("col1", "string"),
       provider = Some("parquet"),
-      viewOriginalText = Some("SELECT * FROM tbl ORDER BY id"))
+      viewOriginalText = Some("SELECT * FROM tbl ORDER BY id"),
+      viewText = Some("SELECT * FROM tbl ORDER BY id"))
     catalog.createTable(mvTable, ignoreIfExists = false)
     tablesCreated :+ mvTable
+
+    when(mockCatalog.getMaterializedViewForTable("db", "tbl"))
+      .thenReturn(CatalogCreationData("db", "tbl", Seq(("db", "mv"))))
+
+    when(mockCatalog.getMaterializedViewsOfTable(Seq(("db", "mv"))))
+      .thenReturn(Seq(mvTable))
+
+    val maybePlan = getPlan(mvTable)
+    when(mockCatalog.getMaterializedViewPlan(mvTable))
+      .thenReturn(maybePlan)
   }
 
   def newDb(name: String): CatalogDatabase = {
@@ -122,13 +139,13 @@ class SubstituteMvOSSuite extends QueryTest
 
   test("Optimizer should substitute materialized view") {
     spark.sharedState.mvCatalog.init(spark) // we should move this inside session creation
-    withSQLConf((mvConfName, "true"), (HiveUtils.HIVE_METASTORE_JARS.key, "3.1.1")) {
+    withSQLConf((mvConfName, "true")) {
       val df1 = spark.sql("select * from db.tbl where id > 20")
       val df2 = spark.sql("select * from db.mv where id > 20")
       val optimized1 = Optimize.execute(df1.queryExecution.analyzed)
-      val optimized2 = df2.queryExecution.optimizedPlan
+      val optimized2 = Optimize.execute(df2.queryExecution.analyzed)
 
-      // comparePlans(optimized1, optimized2)
+      comparePlans(optimized1, optimized2)
     }
   }
 
