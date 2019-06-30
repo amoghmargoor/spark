@@ -19,23 +19,20 @@ package org.apache.spark.sql.hive
 
 import java.net.URI
 
-import org.apache.spark.internal.config.Tests
-
 import scala.collection.mutable
-import org.mockito.Mockito.{spy, when}
+import org.mockito.Mockito.when
 import org.scalatest.PrivateMethodTester
 import org.scalatest.mockito.MockitoSugar
-import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.internal.config.Tests
 import org.apache.spark.internal.config.UI.UI_ENABLED
 import org.apache.spark.sql.{QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.analysis.EliminateSubqueryAliases
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.RuleExecutor
 import org.apache.spark.sql.execution.command.DDLUtils
-import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.internal.{HiveSerDe, SQLConf}
-import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types.StructType
 
 class SubstituteMvOSSuite extends QueryTest
@@ -43,11 +40,12 @@ class SubstituteMvOSSuite extends QueryTest
 
   var spark: SparkSession = _
   var catalog: SessionCatalog = _
-  // private val mvCatalog: MvCatalog = spark.sharedState.mvCatalog
   private val mockCatalog: MvCatalog = mock[HiveMvCatalog]
 
   // Private method accessors
   private val mvConfName = SQLConf.ENABLE_MV_OS_OPTIMIZATION.key
+  private val convertOrcConfName = HiveUtils.CONVERT_METASTORE_ORC.key
+
   private var dataSourceTable: CatalogTable = _
   private var mvTable: CatalogTable = _
   private val tablesCreated: mutable.Seq[CatalogTable] = mutable.Seq.empty
@@ -67,15 +65,11 @@ class SubstituteMvOSSuite extends QueryTest
         .config(Tests.IS_TESTING.key, "true" )
         .master("local[1]")
         .appName("Materialized views")
-        // The issue described in SPARK-16901 only appear when
-        // spark.sql.hive.metastore.jars is not set to builtin.
-        .config("spark.sql.hive.metastore.jars", "maven")
         .enableHiveSupport()
       builder.getOrCreate()
     }
 
     catalog = spark.sessionState.catalog
-
 
     catalog.createDatabase(newDb("db"), ignoreIfExists = true)
     var ident = TableIdentifier("tbl", Some("db"))
@@ -84,10 +78,10 @@ class SubstituteMvOSSuite extends QueryTest
     dataSourceTable = CatalogTable(
       identifier = TableIdentifier("tbl", Some("db")),
       tableType = CatalogTableType.MANAGED,
-      storage = CatalogStorageFormat.empty,
+      storage = getCatalogStorageFormat(serde),
       schema = new StructType()
         .add("id", "int").add("col1", "string"),
-      provider = Some("parquet"))
+      provider = Some(DDLUtils.HIVE_PROVIDER))
     catalog.createTable(dataSourceTable, ignoreIfExists = false)
     tablesCreated :+ dataSourceTable
 
@@ -96,10 +90,9 @@ class SubstituteMvOSSuite extends QueryTest
     mvTable = CatalogTable(
       identifier = TableIdentifier("mv", Some("db")),
       tableType = CatalogTableType.MV,
-      storage = CatalogStorageFormat.empty,
+      storage = getCatalogStorageFormat(serde),
       schema = new StructType()
         .add("id", "int").add("col1", "string"),
-      provider = Some("parquet"),
       viewOriginalText = Some("SELECT * FROM tbl ORDER BY id"),
       viewText = Some("SELECT * FROM tbl ORDER BY id"))
     catalog.createTable(mvTable, ignoreIfExists = false)
@@ -139,9 +132,10 @@ class SubstituteMvOSSuite extends QueryTest
 
   test("Optimizer should substitute materialized view") {
     spark.sharedState.mvCatalog.init(spark) // we should move this inside session creation
-    withSQLConf((mvConfName, "true")) {
-      val df1 = spark.sql("select * from db.tbl where id > 20")
-      val df2 = spark.sql("select * from db.mv where id > 20")
+    withSQLConf((mvConfName, "true"),
+      (convertOrcConfName, "true")) {
+      val df1 = spark.sql("select * from db.tbl where id = 20")
+      val df2 = spark.sql("select * from db.mv where id = 20")
       val optimized1 = Optimize.execute(df1.queryExecution.analyzed)
       val optimized2 = Optimize.execute(df2.queryExecution.analyzed)
 
@@ -188,9 +182,11 @@ class SubstituteMvOSSuite extends QueryTest
     override protected def batches = {
       Seq(Batch("Substitute MV",
         Once,
+        EliminateSubqueryAliases,
         SubstituteMaterializedOSView(mockCatalog.asInstanceOf[HiveMvCatalog])))
     }
   }
+
 
 }
 
