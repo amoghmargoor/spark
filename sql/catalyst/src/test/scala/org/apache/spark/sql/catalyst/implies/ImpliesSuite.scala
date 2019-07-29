@@ -36,7 +36,7 @@ class ImpliesSuite extends SparkFunSuite {
     ExprContainer("(a > 100) and (a > 20 or b > 100)",
                   "(a > 20)"),
     ExprContainer("(a < 100) and (a < 20 or b > 100)",
-                  "(a < 100)")
+                  "(a < 20)")
   )
 
   private val negativeTestExprs: Seq[ExprContainer] = Seq()
